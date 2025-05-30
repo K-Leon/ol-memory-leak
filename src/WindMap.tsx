@@ -12,11 +12,19 @@ import styled from 'styled-components'
 // Mount counter for debugging
 let mountCounter = 0
 
-// Single style for all features
-const featureStyle = new Style({
+// Style for normal features
+const normalStyle = new Style({
   image: new Circle({
     radius: 4,
     fill: new Fill({ color: '#999999' }),
+  }),
+})
+
+// Style for highlighted features
+const highlightStyle = new Style({
+  image: new Circle({
+    radius: 6,
+    fill: new Fill({ color: '#ff6b6b' }),
   }),
 })
 
@@ -30,7 +38,7 @@ const generateFeatures = (count: number = 10000) => {
       geometry: new Point(fromLonLat([lon, lat])),
     })
     feature.setId(i)
-    feature.setStyle(featureStyle)
+    feature.setStyle(normalStyle)
     features.push(feature)
   }
   return features
@@ -41,6 +49,8 @@ const MinimalBugRepro: React.FC = () => {
   const [showMap, setShowMap] = useState(true)
   const [hitCount, setHitCount] = useState(0)
   const [enableHitDetection, setEnableHitDetection] = useState(true)
+  const [enableHighlight, setEnableHighlight] = useState(false)
+  const lastHighlightedFeatureRef = useRef<Feature<Point> | null>(null)
 
   useEffect(() => {
     if (!showMap || !mapRef.current) return
@@ -75,11 +85,29 @@ const MinimalBugRepro: React.FC = () => {
           hitTolerance: 0,
           checkWrapped: false,
         }
-      )
+      ) as Feature<Point> | undefined
 
       if (feature) {
         setHitCount(prev => prev + 1)
         console.log(`Hit feature on mount #${currentMount}`)
+
+        // Handle highlighting if enabled
+        if (enableHighlight) {
+          // Reset previous highlighted feature
+          if (lastHighlightedFeatureRef.current && lastHighlightedFeatureRef.current !== feature) {
+            lastHighlightedFeatureRef.current.setStyle(normalStyle)
+          }
+
+          // Highlight current feature
+          feature.setStyle(highlightStyle)
+          lastHighlightedFeatureRef.current = feature
+        }
+      } else {
+        // No feature under cursor - reset highlight if enabled
+        if (enableHighlight && lastHighlightedFeatureRef.current) {
+          lastHighlightedFeatureRef.current.setStyle(normalStyle)
+          lastHighlightedFeatureRef.current = null
+        }
       }
     }
 
@@ -89,11 +117,20 @@ const MinimalBugRepro: React.FC = () => {
     return () => {
       console.log(`🔴 Unmount #${currentMount}`)
 
+      // Reset any highlighted feature
+      if (lastHighlightedFeatureRef.current) {
+        lastHighlightedFeatureRef.current.setStyle(normalStyle)
+        lastHighlightedFeatureRef.current = null
+      }
+
       // Remove event listener
       map.un('pointermove', handlePointerMove)
 
+      // Dispose of map
+      map.setTarget(undefined)
+      map.dispose()
     }
-  }, [showMap, enableHitDetection])
+  }, [showMap, enableHitDetection, enableHighlight])
 
   return (
     <Container>
@@ -108,6 +145,17 @@ const MinimalBugRepro: React.FC = () => {
           <label htmlFor="hit-detection">Enable forEachFeatureAtPixel</label>
         </CheckboxWrapper>
 
+        <CheckboxWrapper $disabled={!enableHitDetection}>
+          <input
+            type="checkbox"
+            id="highlight"
+            checked={enableHighlight}
+            onChange={(e) => setEnableHighlight(e.target.checked)}
+            disabled={!enableHitDetection}
+          />
+          <label htmlFor="highlight">Enable Feature Highlight</label>
+        </CheckboxWrapper>
+
         <Button onClick={() => setShowMap(!showMap)}>
           {showMap ? '🛑 Unmount' : '▶️ Mount'} Map
         </Button>
@@ -117,17 +165,20 @@ const MinimalBugRepro: React.FC = () => {
           <StatusIndicator $enabled={enableHitDetection}>
             Hit Detection: {enableHitDetection ? '✅ ON' : '❌ OFF'}
           </StatusIndicator>
+          <StatusIndicator $enabled={enableHighlight && enableHitDetection}>
+            Highlighting: {enableHighlight && enableHitDetection ? '✅ ON' : '❌ OFF'}
+          </StatusIndicator>
           <Instructions>
             <strong>Steps to reproduce Chrome freeze:</strong><br />
-            1. Ensure checkbox is ON<br />
+            1. Ensure hit detection is ON<br />
             2. Move mouse over features (gray dots)<br />
             3. Click Unmount<br />
             4. Click Mount<br />
             5. Repeat steps 2-4 about 3-4 times<br />
             6. Chrome will freeze/lag severely<br />
             <br />
-            With checkbox OFF, no freeze occurs!<br />
-            This proves forEachFeatureAtPixel causes the leak.
+            With hit detection OFF, no freeze occurs!<br />
+            Enable highlight to see features turn red on hover.
           </Instructions>
         </Info>
       </Controls>
@@ -162,23 +213,24 @@ const Controls = styled.div`
   max-width: 300px;
 `
 
-const CheckboxWrapper = styled.div`
+const CheckboxWrapper = styled.div<{ $disabled?: boolean }>`
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 12px;
   background: #f8f9fa;
   border-radius: 4px;
+  opacity: ${props => props.$disabled ? 0.6 : 1};
   
   input[type="checkbox"] {
     width: 18px;
     height: 18px;
-    cursor: pointer;
+    cursor: ${props => props.$disabled ? 'not-allowed' : 'pointer'};
     margin: 0;
   }
   
   label {
-    cursor: pointer;
+    cursor: ${props => props.$disabled ? 'not-allowed' : 'pointer'};
     font-weight: 500;
     user-select: none;
   }
